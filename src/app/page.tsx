@@ -54,11 +54,11 @@ export default function DashboardPage() {
     if (severity !== "all") params.set("severity", severity);
 
     fetch(`/api/events?${params.toString()}`)
-    .then((res) => res.json())
-    .then((data) => {
-      setEvents(data.events || []);
-      setLoadingEvents(false);
-    });
+      .then((res) => res.json())
+      .then((data) => {
+        setEvents(data.events || []);
+        setLoadingEvents(false);
+      });
   }, [search, severity]);
 
   // Trap D: Uncancelled streaming reader causes cross-event token bleed
