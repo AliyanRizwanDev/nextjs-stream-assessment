@@ -5,6 +5,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SystemEvent } from "@/lib/mockData";
 import { HeavyPayloadFormatter } from "@/components/HeavyPayloadFormatter";
+import { SummaryOutput } from "@/components/SummaryOutput";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -21,20 +22,14 @@ export default function DashboardPage() {
   const [eventsError, setEventsError] = useState<string | null>(null);
 
   const [selectedEvent, setSelectedEvent] = useState<SystemEvent | null>(null);
-  const [summaryText, setSummaryText] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [streamError, setStreamError] = useState<string | null>(null);
+  const [selectionRequestId, setSelectionRequestId] = useState(0);
 
+  const [isHydrated, setIsHydrated] = useState(false);
   const renderCount = useRef(0);
-  const streamController = useRef<AbortController | null>(null);
-  const streamRequestId = useRef(0);
   renderCount.current += 1;
 
   useEffect(() => {
-    return () => {
-      streamRequestId.current += 1;
-      streamController.current?.abort();
-    };
+    setIsHydrated(true);
   }, []);
 
   // Trap A: Effect 1 pushes local state into URL
@@ -106,57 +101,8 @@ export default function DashboardPage() {
 
   // Trap D: Uncancelled streaming reader causes cross-event token bleed
   async function handleSelectEvent(evt: SystemEvent) {
-    const requestId = ++streamRequestId.current;
-    streamController.current?.abort();
-    const controller = new AbortController();
-    streamController.current = controller;
-
     setSelectedEvent(evt);
-    setSummaryText("");
-    setIsStreaming(true);
-    setStreamError(null);
-
-    try {
-      const res = await fetch(`/api/stream-summary?eventId=${evt.id}`, {
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        throw new Error(`Summary request failed (${res.status})`);
-      }
-      if (!res.body) {
-        throw new Error("Summary response did not contain a stream");
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done || controller.signal.aborted || requestId !== streamRequestId.current) break;
-        if (value) {
-          const chunk = decoder.decode(value, { stream: true });
-          setSummaryText((prev) => prev + chunk);
-        }
-      }
-
-      if (!controller.signal.aborted && requestId === streamRequestId.current) {
-        const remaining = decoder.decode();
-        if (remaining) {
-          setSummaryText((prev) => prev + remaining);
-        }
-      }
-    } catch (error) {
-      if (!controller.signal.aborted && requestId === streamRequestId.current) {
-        setStreamError(error instanceof Error ? error.message : "Unable to load summary");
-      }
-    } finally {
-      if (requestId === streamRequestId.current) {
-        setIsStreaming(false);
-      }
-      if (streamController.current === controller) {
-        streamController.current = null;
-      }
-    }
+    setSelectionRequestId((requestId) => requestId + 1);
   }
 
   return (
@@ -194,7 +140,9 @@ export default function DashboardPage() {
             <option value="warning">Warning</option>
             <option value="critical">Critical</option>
           </select>
-          <span style={{ fontSize: "12px", color: "#64748b" }}>Page renders: {renderCount.current}</span>
+          <span style={{ fontSize: "12px", color: "#64748b" }}>
+            Page renders: {isHydrated ? renderCount.current : "..."}
+          </span>
         </div>
 
         <div style={{ overflowY: "auto", flex: 1 }}>
@@ -243,14 +191,13 @@ export default function DashboardPage() {
           <h2 style={{ margin: 0, fontSize: "18px" }}>
             {selectedEvent ? `Analysis: ${selectedEvent.id}` : "Incident Summary"}
           </h2>
-          {isStreaming && <span style={{ fontSize: "12px", color: "#38bdf8" }}>Streaming tokens...</span>}
         </div>
-        {streamError && <p role="alert">{streamError}</p>}
-
-        <HeavyPayloadFormatter
-          rawPayload={selectedEvent?.rawPayload || "{}"}
-          summaryText={summaryText}
+        <SummaryOutput
+          key={selectionRequestId}
+          eventId={selectedEvent?.id ?? null}
         />
+
+        <HeavyPayloadFormatter rawPayload={selectedEvent?.rawPayload || "{}"} />
       </div>
     </div>
   );
