@@ -4,7 +4,7 @@ Please answer these four questions concisely before submitting your solution.
 
 ## 1. Root-Cause Diagnosis
 What caused each of the three reported issues in the starter codebase?
-- **Stream cross-contamination:**
+- **Stream cross-contamination:** Selecting a second event started another summary request without stopping the first. Both streams kept appending chunks to the same `summaryText` state, so the first event's remaining text could appear in the second event's summary.
 - **Duplicate fetches & broken history navigation:**
 - **Render cascade during streaming:**
 

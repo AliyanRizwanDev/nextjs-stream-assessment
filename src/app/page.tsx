@@ -1,15 +1,5 @@
 "use client";
 
-/**
- * PLANTED TRAPS IN THIS FILE:
- * 1. Entire page is a single 'use client' component (no RSC usage).
- * 2. Cascading useEffect hooks sync search/severity with URL searchParams,
- *    causing duplicate fetches, missing debouncing, and broken browser Back button.
- * 3. Streaming fetch loop lacks AbortController / request-ID guards: rapidly clicking
- *    Event A then Event B interleaves tokens from both streams into `summaryText`.
- * 4. `summaryText` state lives at the top-level page component, forcing all 500
- *    event rows and HeavyPayloadFormatter to re-render on every single streamed token.
- */
 
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -28,9 +18,19 @@ export default function DashboardPage() {
   const [selectedEvent, setSelectedEvent] = useState<SystemEvent | null>(null);
   const [summaryText, setSummaryText] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
 
   const renderCount = useRef(0);
+  const streamController = useRef<AbortController | null>(null);
+  const streamRequestId = useRef(0);
   renderCount.current += 1;
+
+  useEffect(() => {
+    return () => {
+      streamRequestId.current += 1;
+      streamController.current?.abort();
+    };
+  }, []);
 
   // Trap A: Effect 1 pushes local state into URL
   useEffect(() => {
@@ -63,24 +63,57 @@ export default function DashboardPage() {
 
   // Trap D: Uncancelled streaming reader causes cross-event token bleed
   async function handleSelectEvent(evt: SystemEvent) {
+    const requestId = ++streamRequestId.current;
+    streamController.current?.abort();
+    const controller = new AbortController();
+    streamController.current = controller;
+
     setSelectedEvent(evt);
     setSummaryText("");
     setIsStreaming(true);
+    setStreamError(null);
 
-    const res = await fetch(`/api/stream-summary?eventId=${evt.id}`);
-    if (!res.body) return;
+    try {
+      const res = await fetch(`/api/stream-summary?eventId=${evt.id}`, {
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        throw new Error(`Summary request failed (${res.status})`);
+      }
+      if (!res.body) {
+        throw new Error("Summary response did not contain a stream");
+      }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
-      setSummaryText((prev) => prev + chunk);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done || controller.signal.aborted || requestId !== streamRequestId.current) break;
+        if (value) {
+          const chunk = decoder.decode(value, { stream: true });
+          setSummaryText((prev) => prev + chunk);
+        }
+      }
+
+      if (!controller.signal.aborted && requestId === streamRequestId.current) {
+        const remaining = decoder.decode();
+        if (remaining) {
+          setSummaryText((prev) => prev + remaining);
+        }
+      }
+    } catch (error) {
+      if (!controller.signal.aborted && requestId === streamRequestId.current) {
+        setStreamError(error instanceof Error ? error.message : "Unable to load summary");
+      }
+    } finally {
+      if (requestId === streamRequestId.current) {
+        setIsStreaming(false);
+      }
+      if (streamController.current === controller) {
+        streamController.current = null;
+      }
     }
-
-    setIsStreaming(false);
   }
 
   return (
@@ -168,6 +201,7 @@ export default function DashboardPage() {
           </h2>
           {isStreaming && <span style={{ fontSize: "12px", color: "#38bdf8" }}>Streaming tokens...</span>}
         </div>
+        {streamError && <p role="alert">{streamError}</p>}
 
         <HeavyPayloadFormatter
           rawPayload={selectedEvent?.rawPayload || "{}"}
