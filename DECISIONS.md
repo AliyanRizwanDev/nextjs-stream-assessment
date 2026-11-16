@@ -16,6 +16,7 @@ Which parts of the application did you move to Server Components vs. keep as Cli
 
 ## 3. Stream Cancellation & Race-Condition Strategy
 How did you guarantee that rapid clicks across multiple events never interleave chunks or throw unhandled `AbortError` exceptions? What happens if a user selects Event A -> Event B -> Event A quickly?
+The summary component owns the request. When it unmounts after another selection, its cleanup aborts the fetch and marks that request inactive. The catch ignores errors from an aborted request, and the inactive request can't add more text. The selection key changes on every click, so A -> B -> A starts a fresh request for the second A.
 
 ## 4. State Synchronization & Render Performance
 - The input updates while typing, then waits 600 ms after the last change before updating the URL and fetching results. I use push once for the settled filter, not once per keystroke. Back and Forward put the filter values back in the inputs, and the matching results load. A new fetch aborts the previous one so an older response can't replace the current results.
