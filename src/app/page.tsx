@@ -2,18 +2,23 @@
 
 
 import React, { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SystemEvent } from "@/lib/mockData";
 import { HeavyPayloadFormatter } from "@/components/HeavyPayloadFormatter";
 
 export default function DashboardPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const [search, setSearch] = useState(searchParams.get("search") || "");
-  const [severity, setSeverity] = useState(searchParams.get("severity") || "all");
+  const urlSearch = searchParams.get("search") || "";
+  const urlSeverity = searchParams.get("severity") || "all";
+  const currentParams = searchParams.toString();
+  const [search, setSearch] = useState(urlSearch);
+  const [severity, setSeverity] = useState(urlSeverity);
   const [events, setEvents] = useState<SystemEvent[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(false);
+  const [eventsError, setEventsError] = useState<string | null>(null);
 
   const [selectedEvent, setSelectedEvent] = useState<SystemEvent | null>(null);
   const [summaryText, setSummaryText] = useState("");
@@ -34,32 +39,70 @@ export default function DashboardPage() {
 
   // Trap A: Effect 1 pushes local state into URL
   useEffect(() => {
-    const params = new URLSearchParams();
-    if (search) params.set("search", search);
-    if (severity !== "all") params.set("severity", severity);
-    router.push(`/?${params.toString()}`);
-  }, [search, severity, router]);
+    if (search === urlSearch && severity === urlSeverity) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      const params = new URLSearchParams(currentParams);
+      if (search) params.set("search", search);
+      else params.delete("search");
+      if (severity !== "all") params.set("severity", severity);
+      else params.delete("severity");
+
+      const query = params.toString();
+      router.push(query ? `${pathname}?${query}` : pathname, { scroll: false });
+    }, 600);
+
+    return () => window.clearTimeout(timeout);
+  }, [currentParams, pathname, router, search, severity, urlSearch, urlSeverity]);
 
   // Trap B: Effect 2 also listens to searchParams and overwrites state (feedback loop)
   useEffect(() => {
-    setSearch(searchParams.get("search") || "");
-    setSeverity(searchParams.get("severity") || "all");
-  }, [searchParams]);
+    setSearch(urlSearch);
+    setSeverity(urlSeverity);
+  }, [urlSearch, urlSeverity]);
 
   // Trap C: Un-debounced fetch with no race-condition cancellation
   useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
     setLoadingEvents(true);
+    setEventsError(null);
     const params = new URLSearchParams();
-    if (search) params.set("search", search);
-    if (severity !== "all") params.set("severity", severity);
+    if (urlSearch) params.set("search", urlSearch);
+    if (urlSeverity !== "all") params.set("severity", urlSeverity);
 
-    fetch(`/api/events?${params.toString()}`)
-      .then((res) => res.json())
-      .then((data) => {
-        setEvents(data.events || []);
-        setLoadingEvents(false);
-      });
-  }, [search, severity]);
+    async function loadEvents() {
+      try {
+        const response = await fetch(`/api/events?${params.toString()}`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error(`Event request failed (${response.status})`);
+        }
+        const data: { events?: SystemEvent[] } = await response.json();
+        if (active) {
+          setEvents(data.events || []);
+        }
+      } catch (error) {
+        if (active) {
+          setEventsError(error instanceof Error ? error.message : "Unable to load events");
+        }
+      } finally {
+        if (active) {
+          setLoadingEvents(false);
+        }
+      }
+    }
+
+    void loadEvents();
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [urlSearch, urlSeverity]);
 
   // Trap D: Uncancelled streaming reader causes cross-event token bleed
   async function handleSelectEvent(evt: SystemEvent) {
@@ -156,6 +199,7 @@ export default function DashboardPage() {
 
         <div style={{ overflowY: "auto", flex: 1 }}>
           {loadingEvents && <div style={{ padding: "12px", color: "#94a3b8" }}>Loading events...</div>}
+          {eventsError && <p role="alert">{eventsError}</p>}
           {events.map((evt) => (
             <div
               key={evt.id}
