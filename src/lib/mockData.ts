@@ -34,3 +34,17 @@ export const ALL_EVENTS: SystemEvent[] = Array.from({ length: 500 }, (_, i) => {
     ),
   };
 });
+
+export function getFilteredEvents(search: string, severity: string): SystemEvent[] {
+  const normalizedSearch = search.toLowerCase().trim();
+
+  return ALL_EVENTS.filter((evt) => {
+    const matchesSeverity = severity === "all" || evt.severity === severity;
+    const matchesSearch =
+      !normalizedSearch ||
+      evt.title.toLowerCase().includes(normalizedSearch) ||
+      evt.service.toLowerCase().includes(normalizedSearch) ||
+      evt.id.toLowerCase().includes(normalizedSearch);
+    return matchesSeverity && matchesSearch;
+  });
+}

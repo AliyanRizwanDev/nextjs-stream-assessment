@@ -15,7 +15,7 @@ export function HeavyPayloadFormatter({ rawPayload }: { rawPayload: string }) {
   }
 
   return (
-    <div data-checksum={checksum} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
       <details open>
         <summary style={{ cursor: "pointer", color: "#94a3b8", fontSize: "13px" }}>Raw Telemetry Payload</summary>
         <pre
